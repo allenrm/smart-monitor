@@ -1,0 +1,92 @@
+# Example configuration file for smart_monitor
+# Instructions
+# Please copy this configuration file using the following command because the script will specifically look for a config.yml file
+# cp config.yml.example config.yml
+
+# REMINDER! Be sure to protect your configuration file with the proper permissions
+# chmod 640 config.yml
+
+# Defines configurable logging parameters
+# Refer to Python documentation for logging for details regarding logging level, max file size, and formatting
+logging:
+  file: /var/log/cron/smart_monitor.log
+  format:
+  maxsize: 5000
+  level: WARNING
+
+# Defines SMTP settings for sending emails
+smtp:
+  hostname: smtp.gmail.com
+  port: 465
+  ssl: True
+  username: my_address@gmail.com
+  password: mysupersecretpassword
+
+# Defines email attributes
+email:
+  sender: my_address@gmail.com
+  destination: my_address@gmail.com
+
+# Defines attributes related to interpretting SMART report and how to handle attributes
+smart:
+  # Global attribute used to control sending of emails. If set to False, no emails will be sent at all
+  report_values: True
+  # When set to True, an email will be sent for each new disk that did not exist durring previous run. The email will contain an initial report regarding the disk's current health
+  # WARNING! If set to True when first running script, all drives are new therefore an email will be generated for all disks
+  report_initial_values: True
+  # When set to True, an email will be sent whenever a monitored Smart report attribute is updated and exceeds its threshold value
+  report_updated_values: True
+  # Used to determine location SMART report columnds
+  # See notes section at end of file on example of SMART report column numbering
+  attribute_name: 1
+  when_failed: 8
+  raw_value: 9
+  # Contains the list of attribute names that will be monitored and the threshold for which an email report should be sent
+  attributes:
+    - reallocated_sector_ct:
+        threshold: 0
+    - reallocated_event_count:
+        threshold: 0
+    - current_pending_sector:
+        threshold: 0
+
+# Defines list of disks to monitor
+# Disks are grouped under an identifier for better organization
+#
+# disks:
+#   group_identifier:
+#     - disk_name:
+#         mount_point: /mnt/disk_name
+#         uuid: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+disks:
+  cache:
+    - cache1:
+        mount_point: /mnt/cache1
+        uuid: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+  parity:
+    - parity1:
+        mount_point: /mnt/parity1
+        uuid: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+  array:
+    - disk1:
+        mount_point: /mnt/disk1
+        uuid: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+    - disk2:
+        mount_point: /mnt/disk2
+        uuid: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+    - disk3:
+        mount_point: /mnt/disk3
+        uuid: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+  misc:
+    - misc1:
+        mount_point: /mnt/misc1
+        uuid: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+
+
+
+# Notes
+#
+# Column numbering for SMART reports are as followed:
+# 0     1                       2        3      4     5      6         7        8           9
+# ID#   ATTRIBUTE_NAME          FLAG     VALUE  WORST THRESH TYPE      UPDATED  WHEN_FAILED RAW_VALUE
+# 1     Raw_Read_Error_Rate     0x000b   100    100   016    Pre-fail  Always       -       0
