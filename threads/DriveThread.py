@@ -2,6 +2,7 @@ import subprocess
 import threading
 import logging
 
+from os.path import exists as check_path_exists
 from distutils.util import strtobool
 from services.DriveService import get_service as get_drive_service
 
@@ -255,6 +256,17 @@ class DriveThread(threading.Thread):
 
         self.__send_message(subject, body)
 
+    def __send_missing_drive_report(self, device_location):
+        subject = "ISSUE! Missing Drive Report: {}".format(self.device["name"])
+
+        body = "Device could not be found using the following UUID path: {}\n\n".format(device_location)
+        body += "The following list are possibly reasons this event may have occurred:\n"
+        body += (" " * 4) + "~  UUID was not properly listed in configuration file. Please check the configuration file to guarantee the UUID for this device is correct.\n"
+        body += (" " * 4) + "~  Device has been ejected from machine, therefore it is no longer accessibly. This may have occurred through an user manually ejecting the device or the machine no longer recognizes the device because something is wrong with either the machine or the device hardware.\n"
+        body += (" " * 4) + "~  Per Python documentation, the os.path.exists() function may not have permission to execute an os.stat() call on the requested path."
+
+        self.__send_message(subject, body)
+
     def __organize_attributes(self, watched_attributes, database_attributes, threshold_attributes, failing_attributes):
         updated_attributes = {}
         exceeded_attributes = {}
@@ -273,49 +285,56 @@ class DriveThread(threading.Thread):
         uuid = self.device["uuid"].lower()
         device_location = "/dev/disk/by-uuid/" + uuid
 
-        # Get SMART report
-        information = self.__get_smart_information(device_location)
-        report = self.__get_smart_report(device_location)
-        watched_attributes = self.__get_watched_attributes(report)
-        failing_attributes = self.__get_failing_attributes(report)
-        thresholds = self.__get_thresholds()
+        # Check if device exists
+        if not check_path_exists(device_location):
+            LOGGER.warning("Thread {} -> Drive location cannot be found using the following path: {}; adding message to queue...".format(self.device["name"], device_location))
+
+            # Add message to queue for later processing
+            self.__send_missing_drive_report(device_location)
+        else:
+            # Get SMART report
+            information = self.__get_smart_information(device_location)
+            report = self.__get_smart_report(device_location)
+            watched_attributes = self.__get_watched_attributes(report)
+            failing_attributes = self.__get_failing_attributes(report)
+            thresholds = self.__get_thresholds()
         
-        # Process drive
-        with self.database.connect() as connection:
-            drive_service = get_drive_service(connection)
+            # Process drive
+            with self.database.connect() as connection:
+                drive_service = get_drive_service(connection)
 
-            # Get drive's database stats
-            database_attributes = drive_service.get_drive(uuid, watched_attributes)
+                # Get drive's database stats
+                database_attributes = drive_service.get_drive(uuid, watched_attributes)
 
-            # Check if entry already exists for drive in database
-            if database_attributes:
-                LOGGER.debug("Thread {} -> Drive currently exists in database; checking if drive needs updating...".format(self.device["name"]))
+                # Check if entry already exists for drive in database
+                if database_attributes:
+                    LOGGER.debug("Thread {} -> Drive currently exists in database; checking if drive needs updating...".format(self.device["name"]))
 
-                # Check if update to database is needed
-                if self.__update_needed(database_attributes, watched_attributes):
-                    LOGGER.debug("Thread {} -> Drive report attributes differ from database; updating database entry for drive...".format(self.device["name"]))
+                    # Check if update to database is needed
+                    if self.__update_needed(database_attributes, watched_attributes):
+                        LOGGER.debug("Thread {} -> Drive report attributes differ from database; updating database entry for drive...".format(self.device["name"]))
 
-                    #Update database entry for drive
-                    drive_service.update_drive(uuid, watched_attributes)
+                        #Update database entry for drive
+                        drive_service.update_drive(uuid, watched_attributes)
 
-                    # Check if email to admin is needed
-                    if self.__to_bool(self.smart["report_values"]) and self.__to_bool(self.smart["report_updated_values"]) and self.__message_needed(watched_attributes, thresholds):
-                        LOGGER.debug("Thread {} -> Mail requested by admin for updated values of drive; adding message to queue...".format(self.device["name"]))
+                        # Check if email to admin is needed
+                        if self.__to_bool(self.smart["report_values"]) and self.__to_bool(self.smart["report_updated_values"]) and self.__message_needed(watched_attributes, thresholds):
+                            LOGGER.debug("Thread {} -> Mail requested by admin for updated values of drive; adding message to queue...".format(self.device["name"]))
+
+                            # Add message to queue for later processing
+                            self.__send_update_report(information, report, self.__organize_attributes(watched_attributes, database_attributes, thresholds, failing_attributes))
+                else:
+                    LOGGER.debug("Thread {} -> Drive does not currently exist in database; adding drive to database...".format(self.device["name"]))
+
+                    # Insert new entry for drive since it doesn't currently exist in database
+                    drive_service.add_drive(uuid, self.device["name"], self.device["group"], watched_attributes)
+
+                    # Check if email with initally values for drive is wanted
+                    if self.__to_bool(self.smart["report_values"]) and self.__to_bool(self.smart["report_initial_values"]):
+                        LOGGER.debug("Thread {} -> Mail requested by admin for initial values of drive; adding message to queue...".format(self.device["name"]))
 
                         # Add message to queue for later processing
-                        self.__send_update_report(information, report, self.__organize_attributes(watched_attributes, database_attributes, thresholds, failing_attributes))
-            else:
-                LOGGER.debug("Thread {} -> Drive does not currently exist in database; adding drive to database...".format(self.device["name"]))
+                        self.__send_initial_report(information, report, self.__organize_attributes(watched_attributes, {}, thresholds, failing_attributes))
 
-                # Insert new entry for drive since it doesn't currently exist in database
-                drive_service.add_drive(uuid, self.device["name"], self.device["group"], watched_attributes)
-
-                # Check if email with initally values for drive is wanted
-                if self.__to_bool(self.smart["report_values"]) and self.__to_bool(self.smart["report_initial_values"]):
-                    LOGGER.debug("Thread {} -> Mail requested by admin for initial values of drive; adding message to queue...".format(self.device["name"]))
-
-                    # Add message to queue for later processing
-                    self.__send_initial_report(information, report, self.__organize_attributes(watched_attributes, {}, thresholds, failing_attributes))
-
-            # Close connection
-            connection.close()
+                # Close connection
+                connection.close()
